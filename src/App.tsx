@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import debounce from 'lodash/debounce';
 import { PlusCircle, FileText, Users, DollarSign, Save, Calendar, Pencil as PencilIcon, FileDown, FileUp } from 'lucide-react';
-import wsService from './services/websocket';
+import wsService from './services/websocket-service';
 import { jsPDF } from 'jspdf';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
@@ -26,6 +27,24 @@ function App() {
   const [currentReport, setCurrentReport] = useState<CashierReport[]>([]);
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
+  const [cashiers, setCashiers] = useState<Cashier[]>(() => {
+    const savedCashiers = localStorage.getItem(STORAGE_KEYS.CASHIERS);
+    return savedCashiers ? JSON.parse(savedCashiers) : [];
+  });
+
+  // Optimized state update and broadcast
+  const updateCashiersState = useCallback((newCashiers: Cashier[]) => {
+    // Update localStorage immediately
+    localStorage.setItem(STORAGE_KEYS.CASHIERS, JSON.stringify(newCashiers));
+    // Update state
+    setCashiers(newCashiers);
+    // Broadcast changes
+    wsService.send({
+      type: 'CASHIERS_UPDATE',
+      cashiers: newCashiers
+    });
+  }, []);
+
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
     const file = event.target.files?.[0];
@@ -39,10 +58,6 @@ function App() {
       }
     }
   };
-  const [cashiers, setCashiers] = useState<Cashier[]>(() => {
-    const savedCashiers = localStorage.getItem(STORAGE_KEYS.CASHIERS);
-    return savedCashiers ? JSON.parse(savedCashiers) : [];
-  });
 
   // WebSocket connection and synchronization
   useEffect(() => {
@@ -53,8 +68,13 @@ function App() {
       reports?: DailyReport[];
     }) => {
       if (data.type === 'CASHIERS_UPDATE' && data.cashiers) {
-        setCashiers(data.cashiers);
-        localStorage.setItem(STORAGE_KEYS.CASHIERS, JSON.stringify(data.cashiers));
+        // Only update if the data is different from our current state
+        const currentCashiers = JSON.stringify(cashiers);
+        const newCashiers = JSON.stringify(data.cashiers);
+        if (currentCashiers !== newCashiers) {
+          setCashiers(data.cashiers);
+          localStorage.setItem(STORAGE_KEYS.CASHIERS, newCashiers);
+        }
       } else if (data.type === 'REPORTS_UPDATE' && data.reports) {
         localStorage.setItem('dailyReports', JSON.stringify(data.reports));
         if (selectedDate) {
@@ -71,16 +91,7 @@ function App() {
     return () => {
       unsubscribe();
     };
-  }, [selectedDate]);
-
-  // Save and broadcast cashiers whenever they change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CASHIERS, JSON.stringify(cashiers));
-    wsService.send({
-      type: 'CASHIERS_UPDATE',
-      cashiers
-    });
-  }, [cashiers]);
+  }, [selectedDate, cashiers]);
 
   // Load saved reports from localStorage on component mount
   useEffect(() => {
@@ -116,7 +127,7 @@ function App() {
       alert('الرجاء إدخال اسم موظف صحيح');
       return;
     }
-    setCashiers([
+    const newCashiers = [
       ...cashiers,
       {
         id: Date.now().toString(),
@@ -126,7 +137,8 @@ function App() {
         returnSales: 0,
         deliveries: [],
       },
-    ]);
+    ];
+    updateCashiersState(newCashiers);
     setNewCashierName('');
   };
 
@@ -139,50 +151,61 @@ function App() {
       alert('لا يمكن أن تكون المبيعات بالسالب');
       return;
     }
-    setCashiers(
-      cashiers.map((cashier) =>
-        cashier.id === id
-          ? {
-              ...cashier,
-              [field]: value,
-              expectedAmount:
-                field === 'cashSales'
-                  ? value - cashier.returnSales
-                  : cashier.cashSales - value,
-            }
-          : cashier
-      )
+    const newCashiers = cashiers.map((cashier) =>
+      cashier.id === id
+        ? {
+            ...cashier,
+            [field]: value,
+            expectedAmount:
+              field === 'cashSales'
+                ? value - cashier.returnSales
+                : cashier.cashSales - value,
+          }
+        : cashier
     );
+    updateCashiersState(newCashiers);
   };
 
-  const addDelivery = (id: string, amount: number, method: 'نقدي' | 'فودافون كاش' | 'دفعات' | 'انستا باي' | 'شيكات' | 'تحويل بنكي') => {
-    setCashiers(
-      cashiers.map((cashier) =>
-        cashier.id === id
-          ? {
-              ...cashier,
-              deliveries: [
-                ...cashier.deliveries,
-                { id: Date.now().toString(), amount, timestamp: new Date(), method },
-              ],
-            }
-          : cashier
-      )
+  const addDelivery = useCallback((id: string, amount: number, method: Delivery['method']) => {
+    const newCashiers = cashiers.map((cashier) =>
+      cashier.id === id
+        ? {
+            ...cashier,
+            deliveries: [
+              ...cashier.deliveries,
+              { id: Date.now().toString(), amount, timestamp: new Date(), method },
+            ],
+          }
+        : cashier
     );
-  };
+    updateCashiersState(newCashiers);
+  }, [cashiers, updateCashiersState]);
+
+  const deleteDelivery = useCallback((cashierId: string, deliveryId: string) => {
+    const newCashiers = cashiers.map((c) =>
+      c.id === cashierId
+        ? {
+            ...c,
+            deliveries: c.deliveries.filter((d) => d.id !== deliveryId),
+          }
+        : c
+    );
+    updateCashiersState(newCashiers);
+  }, [cashiers, updateCashiersState]);
 
   const startNewDay = () => {
     // Save current data as a report first
     generateReport();
     
     // Reset cashiers' daily data but keep their names
-    setCashiers(cashiers.map(cashier => ({
+    const newCashiers = cashiers.map(cashier => ({
       ...cashier,
       expectedAmount: 0,
       cashSales: 0,
       returnSales: 0,
       deliveries: []
-    })));
+    }));
+    updateCashiersState(newCashiers);
   };
 
   const generateReport = () => {
@@ -297,11 +320,11 @@ function App() {
     doc.save(fileName);
   };
 
-return (
+  return (
     <div className="min-h-screen bg-gray-50 text-right" dir="rtl">
-        <div className="container mx-auto px-4 py-8">
-            <div className="mb-4 flex justify-between items-center">
-                <div className="flex gap-2 items-center">
+      <div className="container mx-auto px-4 py-8">
+        <div className="mb-4 flex justify-between items-center">
+          <div className="flex gap-2 items-center">
             <button
               onClick={exportData}
               className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
@@ -377,22 +400,20 @@ return (
                     onChange={(e) => setEditingName(e.target.value)}
                     onBlur={() => {
                       if (editingName.trim()) {
-                        setCashiers(
-                          cashiers.map((c) =>
-                            c.id === editingId ? { ...c, name: editingName.trim() } : c
-                          )
+                        const newCashiers = cashiers.map((c) =>
+                          c.id === editingId ? { ...c, name: editingName.trim() } : c
                         );
+                        updateCashiersState(newCashiers);
                       }
                       setEditingId(null);
                       setEditingName('');
                     }}
                     onKeyPress={(e) => {
                       if (e.key === 'Enter' && editingName.trim()) {
-                        setCashiers(
-                          cashiers.map((c) =>
-                            c.id === editingId ? { ...c, name: editingName.trim() } : c
-                          )
+                        const newCashiers = cashiers.map((c) =>
+                          c.id === editingId ? { ...c, name: editingName.trim() } : c
                         );
+                        updateCashiersState(newCashiers);
                         setEditingId(null);
                         setEditingName('');
                       }
@@ -484,27 +505,17 @@ return (
                           }
                         }}
                       />
-                      <div className="flex-1">
-                        <select
-                          defaultValue="نقدي"
-                          onChange={(e) => {
-                            const input = e.currentTarget.parentElement?.parentElement?.querySelector('input') as HTMLInputElement;
-                            const amount = Number(input.value);
-                            if (amount) {
-                              addDelivery(cashier.id, amount, e.target.value as Delivery['method']);
-                              input.value = '';
-                            }
-                          }}
-                          className="w-full p-2 border rounded-md bg-white"
-                        >
-                          <option value="نقدي">نقدي</option>
-                          <option value="فودافون كاش">فودافون كاش</option>
-                          <option value="دفعات">دفعات</option>
-                          <option value="انستا باي">انستا باي</option>
-                          <option value="شيكات">شيكات</option>
-                          <option value="تحويل بنكي">تحويل بنكي</option>
-                        </select>
-                      </div>
+                      <select
+                        defaultValue="نقدي"
+                        className="w-40 p-2 border rounded-md bg-white"
+                      >
+                        <option value="نقدي">نقدي</option>
+                        <option value="فودافون كاش">فودافون كاش</option>
+                        <option value="دفعات">دفعات</option>
+                        <option value="انستا باي">انستا باي</option>
+                        <option value="شيكات">شيكات</option>
+                        <option value="تحويل بنكي">تحويل بنكي</option>
+                      </select>
                       <button
                         onClick={(event) => {
                           const input = event.currentTarget.parentElement?.querySelector('input') as HTMLInputElement;
@@ -542,20 +553,7 @@ return (
                             {format(new Date(delivery.timestamp), 'hh:mm a')}
                           </span>
                           <button
-                            onClick={() => {
-                              setCashiers(
-                                cashiers.map((c) =>
-                                  c.id === cashier.id
-                                    ? {
-                                        ...c,
-                                        deliveries: c.deliveries.filter(
-                                          (d) => d.id !== delivery.id
-                                        ),
-                                      }
-                                    : c
-                                )
-                              );
-                            }}
+                            onClick={() => deleteDelivery(cashier.id, delivery.id)}
                             className="text-red-500 hover:text-red-700 p-1"
                             title="حذف"
                           >
