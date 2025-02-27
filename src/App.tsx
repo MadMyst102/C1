@@ -26,8 +26,6 @@ function App() {
   const [currentReport, setCurrentReport] = useState<CashierReport[]>([]);
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<Delivery['method']>('نقدي');
-
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     setLoading(true);
     const file = event.target.files?.[0];
@@ -476,32 +474,44 @@ return (
                         className="flex-1 p-2 border rounded-md"
                         onKeyPress={(e) => {
                           if (e.key === 'Enter') {
-                            const amount = Number((e.target as HTMLInputElement).value);
+                            const input = e.target as HTMLInputElement;
+                            const select = input.parentElement?.querySelector('select') as HTMLSelectElement;
+                            const amount = Number(input.value);
                             if (amount) {
-                              addDelivery(cashier.id, amount, selectedPaymentMethod);
-                              (e.target as HTMLInputElement).value = '';
+                              addDelivery(cashier.id, amount, select.value as Delivery['method']);
+                              input.value = '';
                             }
                           }
                         }}
                       />
-                      <select
-                        value={selectedPaymentMethod}
-                        onChange={(e) => setSelectedPaymentMethod(e.target.value as Delivery['method'])}
-                        className="p-2 border rounded-md bg-white"
-                      >
-                        <option value="نقدي">نقدي</option>
-                        <option value="فودافون كاش">فودافون كاش</option>
-                        <option value="دفعات">دفعات</option>
-                        <option value="انستا باي">انستا باي</option>
-                        <option value="شيكات">شيكات</option>
-                        <option value="تحويل بنكي">تحويل بنكي</option>
-                      </select>
+                      <div className="flex-1">
+                        <select
+                          defaultValue="نقدي"
+                          onChange={(e) => {
+                            const input = e.currentTarget.parentElement?.parentElement?.querySelector('input') as HTMLInputElement;
+                            const amount = Number(input.value);
+                            if (amount) {
+                              addDelivery(cashier.id, amount, e.target.value as Delivery['method']);
+                              input.value = '';
+                            }
+                          }}
+                          className="w-full p-2 border rounded-md bg-white"
+                        >
+                          <option value="نقدي">نقدي</option>
+                          <option value="فودافون كاش">فودافون كاش</option>
+                          <option value="دفعات">دفعات</option>
+                          <option value="انستا باي">انستا باي</option>
+                          <option value="شيكات">شيكات</option>
+                          <option value="تحويل بنكي">تحويل بنكي</option>
+                        </select>
+                      </div>
                       <button
                         onClick={(event) => {
                           const input = event.currentTarget.parentElement?.querySelector('input') as HTMLInputElement;
+                          const select = event.currentTarget.parentElement?.querySelector('select') as HTMLSelectElement;
                           const amount = Number(input.value);
                           if (amount) {
-                            addDelivery(cashier.id, amount, selectedPaymentMethod);
+                            addDelivery(cashier.id, amount, select.value as Delivery['method']);
                             input.value = '';
                           }
                         }}
