@@ -21,6 +21,11 @@ if [ ! -d "server/node_modules" ]; then
     cd ..
 fi
 
+# Initialize database
+cd server
+npm run init-db
+cd ..
+
 # Start both servers
 echo "Starting servers..."
 gnome-terminal --title="WebSocket Server" -- bash -c "cd server && npm run dev; exec bash" 2>/dev/null || \

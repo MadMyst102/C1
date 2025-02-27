@@ -22,6 +22,11 @@ if not exist "server\node_modules" (
     cd ..
 )
 
+:: Initialize database
+cd server
+call npm run init-db
+cd ..
+
 :: Start both servers
 echo Starting servers...
 start cmd /k "cd server && npm run dev"

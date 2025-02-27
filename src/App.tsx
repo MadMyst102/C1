@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import debounce from 'lodash/debounce';
 import { PlusCircle, FileText, Users, DollarSign, Save, Calendar, Pencil as PencilIcon, FileDown, FileUp } from 'lucide-react';
-import wsService from './services/websocket-service';
+import wsService from './services/db-websocket';
 import { jsPDF } from 'jspdf';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
