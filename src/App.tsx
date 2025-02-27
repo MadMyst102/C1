@@ -173,7 +173,26 @@ function App() {
     );
   };
 
+  const startNewDay = () => {
+    // Save current data as a report first
+    generateReport();
+    
+    // Reset cashiers' daily data but keep their names
+    setCashiers(cashiers.map(cashier => ({
+      ...cashier,
+      expectedAmount: 0,
+      cashSales: 0,
+      returnSales: 0,
+      deliveries: []
+    })));
+  };
+
   const generateReport = () => {
+    if (cashiers.length === 0) {
+      alert('لا يوجد موظفين لإنشاء التقرير');
+      return;
+    }
+
     const report = cashiers.map((cashier) => {
       const totalDelivered = cashier.deliveries.reduce(
         (sum, delivery) => sum + delivery.amount,
@@ -306,13 +325,22 @@ return (
         </div>
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800">نظام إدارة الكاشير</h1>
-          <button
-            onClick={() => setShowCalendar(true)}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 flex items-center"
-          >
-            <Calendar className="ml-2" size={20} />
-            عرض التقارير السابقة
-          </button>
+          <div className="flex gap-4">
+            <button
+              onClick={startNewDay}
+              className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center"
+            >
+              <Calendar className="ml-2" size={20} />
+              بدء يوم جديد
+            </button>
+            <button
+              onClick={() => setShowCalendar(true)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 flex items-center"
+            >
+              <Calendar className="ml-2" size={20} />
+              عرض التقارير السابقة
+            </button>
+          </div>
         </div>
 
         {/* إضافة موظف جديد */}
