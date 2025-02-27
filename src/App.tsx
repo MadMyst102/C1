@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PlusCircle, FileText, Users, DollarSign, Save, Calendar, Pencil as PencilIcon, FileDown, FileUp } from 'lucide-react';
+import wsService from './services/websocket';
 import { jsPDF } from 'jspdf';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
@@ -16,29 +17,8 @@ const STORAGE_KEYS = {
 };
 
 function App() {
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      try {
-        await importData(file);
-      } catch (error) {
-        alert('Error importing data. Please check the file format.');
-      }
-    }
-  };
-
-  const [cashiers, setCashiers] = useState<Cashier[]>(() => {
-    const savedCashiers = localStorage.getItem(STORAGE_KEYS.CASHIERS);
-    return savedCashiers ? JSON.parse(savedCashiers) : [];
-  });
-
-  // Save cashiers to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CASHIERS, JSON.stringify(cashiers));
-  }, [cashiers]);
-
-  // Removed WebSocket update in favor of localStorage persistence
-
+  // State declarations
+  const [loading, setLoading] = useState(false);
   const [newCashierName, setNewCashierName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -46,6 +26,63 @@ function App() {
   const [currentReport, setCurrentReport] = useState<CashierReport[]>([]);
   const [showCalendar, setShowCalendar] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<Delivery['method']>('نقدي');
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    setLoading(true);
+    const file = event.target.files?.[0];
+    if (file) {
+      try {
+        await importData(file);
+      } catch (error) {
+        alert('Error importing data. Please check the file format.');
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+  const [cashiers, setCashiers] = useState<Cashier[]>(() => {
+    const savedCashiers = localStorage.getItem(STORAGE_KEYS.CASHIERS);
+    return savedCashiers ? JSON.parse(savedCashiers) : [];
+  });
+
+  // WebSocket connection and synchronization
+  useEffect(() => {
+    // Subscribe to WebSocket updates
+    const unsubscribe = wsService.subscribe((data: { 
+      type: string; 
+      cashiers?: Cashier[]; 
+      reports?: DailyReport[];
+    }) => {
+      if (data.type === 'CASHIERS_UPDATE' && data.cashiers) {
+        setCashiers(data.cashiers);
+        localStorage.setItem(STORAGE_KEYS.CASHIERS, JSON.stringify(data.cashiers));
+      } else if (data.type === 'REPORTS_UPDATE' && data.reports) {
+        localStorage.setItem('dailyReports', JSON.stringify(data.reports));
+        if (selectedDate) {
+          const dateStr = format(selectedDate, 'yyyy-MM-dd');
+          const report = data.reports.find((r: DailyReport) => r.date === dateStr);
+          if (report) {
+            setCurrentReport(report.reports);
+            setShowReport(true);
+          }
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [selectedDate]);
+
+  // Save and broadcast cashiers whenever they change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.CASHIERS, JSON.stringify(cashiers));
+    wsService.send({
+      type: 'CASHIERS_UPDATE',
+      cashiers
+    });
+  }, [cashiers]);
 
   // Load saved reports from localStorage on component mount
   useEffect(() => {
@@ -77,20 +114,22 @@ function App() {
   }, [selectedDate]);
 
   const addCashier = () => {
-    if (newCashierName.trim()) {
-      setCashiers([
-        ...cashiers,
-        {
-          id: Date.now().toString(),
-          name: newCashierName,
-          expectedAmount: 0,
-          cashSales: 0,
-          returnSales: 0,
-          deliveries: [],
-        },
-      ]);
-      setNewCashierName('');
+    if (!newCashierName.trim()) {
+      alert('الرجاء إدخال اسم موظف صحيح');
+      return;
     }
+    setCashiers([
+      ...cashiers,
+      {
+        id: Date.now().toString(),
+        name: newCashierName,
+        expectedAmount: 0,
+        cashSales: 0,
+        returnSales: 0,
+        deliveries: [],
+      },
+    ]);
+    setNewCashierName('');
   };
 
   const updateCashierSales = (
@@ -98,6 +137,10 @@ function App() {
     field: 'cashSales' | 'returnSales',
     value: number
   ) => {
+    if (value < 0) {
+      alert('لا يمكن أن تكون المبيعات بالسالب');
+      return;
+    }
     setCashiers(
       cashiers.map((cashier) =>
         cashier.id === id
@@ -113,8 +156,6 @@ function App() {
       )
     );
   };
-
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<Delivery['method']>('نقدي');
 
   const addDelivery = (id: string, amount: number, method: 'نقدي' | 'فودافون كاش' | 'دفعات' | 'انستا باي' | 'شيكات' | 'تحويل بنكي') => {
     setCashiers(
@@ -157,7 +198,7 @@ function App() {
       };
     });
 
-    // Save report to localStorage
+    // Save and broadcast report
     const dailyReport: DailyReport = {
       date: format(new Date(), 'yyyy-MM-dd'),
       reports: report
@@ -175,6 +216,10 @@ function App() {
     }
     
     localStorage.setItem('dailyReports', JSON.stringify(reports));
+    wsService.send({
+      type: 'REPORTS_UPDATE',
+      reports
+    });
 
     setCurrentReport(report);
     setShowReport(true);
@@ -235,11 +280,11 @@ function App() {
     doc.save(fileName);
   };
 
-  return (
+return (
     <div className="min-h-screen bg-gray-50 text-right" dir="rtl">
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-4 flex justify-between items-center">
-          <div className="flex gap-2">
+        <div className="container mx-auto px-4 py-8">
+            <div className="mb-4 flex justify-between items-center">
+                <div className="flex gap-2 items-center">
             <button
               onClick={exportData}
               className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600"
